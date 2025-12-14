@@ -8,11 +8,13 @@ from app.core import security
 from app.core.db import get_db
 from app.models.user import User
 from pydantic import BaseModel, EmailStr
+from app.api.services.auth_service import AuthService
 
 router = APIRouter()
 
 class UserCreate(BaseModel):
     email: EmailStr
+    nickname: str
     password: str
 
 class UserResponse(BaseModel):
@@ -28,26 +30,19 @@ class Token(BaseModel):
 
 @router.post("/register", response_model=UserResponse)
 async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)) -> Any:
-    result = await db.execute(select(User).filter(User.email == user_in.email))
-    existing_user = result.scalars().first()
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="The user with this email already exists in the system",
-        )
-    
-    user = User(email=user_in.email, hashed_password=security.get_password_hash(user_in.password))
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    return user
+    auth_service = AuthService(db)
+    return await auth_service.register_user(
+        user_in.email,
+        user_in.nickname,
+        user_in.password
+    )
 
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)) -> Any:
-    result = await db.execute(select(User).filter(User.email == form_data.username))
-    user = result.scalars().first()
+    auth_service = AuthService(db)
+    user = await auth_service.authenticate_user(form_data.username, form_data.password)
     
-    if not user or not security.verify_password(form_data.password, user.hashed_password):
+    if not user:
         raise HTTPException(status_code=400, detail="Incorrect email or password")
         
     return {
